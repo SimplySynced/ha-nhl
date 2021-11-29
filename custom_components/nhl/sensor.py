@@ -75,17 +75,14 @@ class NHLScoresSensor(CoordinatorEntity):
         self._icon = DEFAULT_ICON
         self._state = "PRE"
         self._date = None
-        self._kickoff_in = None
-        self._quarter = None
+        self._puck_drop = None
+        self._period = None
         self._clock = None
         self._venue = None
         self._location = None
         self._tv_network = None
         self._odds = None
         self._overunder = None
-        self._possession = None
-        self._last_play = None
-        self._down_distance_text = None
         self._team_abbr = None
         self._team_id = None
         self._team_name = None
@@ -95,7 +92,6 @@ class NHLScoresSensor(CoordinatorEntity):
         self._team_colors = None
         self._team_score = None
         self._team_win_probability = None
-        self._team_timeouts = None
         self._opponent_abbr = None
         self._opponent_id = None
         self._opponent_name = None
@@ -105,7 +101,6 @@ class NHLScoresSensor(CoordinatorEntity):
         self._opponent_colors = None
         self._opponent_score = None
         self._opponent_win_probability = None
-        self._opponent_timeouts = None
         self._last_update = None
         self._team_id = entry.data[CONF_TEAM_ID]
         self.coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
@@ -147,17 +142,14 @@ class NHLScoresSensor(CoordinatorEntity):
 
         attrs[ATTR_ATTRIBUTION] = ATTRIBUTION
         attrs["date"] = self.coordinator.data["date"]
-        attrs["kickoff_in"] = self.coordinator.data["kickoff_in"]
-        attrs["quarter"] = self.coordinator.data["quarter"]
+        attrs["puck_drop"] = self.coordinator.data["puck_drop"]
+        attrs["period"] = self.coordinator.data["period"]
         attrs["clock"] = self.coordinator.data["clock"]
         attrs["venue"] = self.coordinator.data["venue"]
         attrs["location"] = self.coordinator.data["location"]
         attrs["tv_network"] = self.coordinator.data["tv_network"]
         attrs["odds"] = self.coordinator.data["odds"]
         attrs["overunder"] = self.coordinator.data["overunder"]
-        attrs["possession"] = self.coordinator.data["possession"]
-        attrs["last_play"] = self.coordinator.data["last_play"]
-        attrs["down_distance_text"] = self.coordinator.data["down_distance_text"]
         attrs["team_abbr"] = self.coordinator.data["team_abbr"]
         attrs["team_id"] = self.coordinator.data["team_id"]
         attrs["team_name"] = self.coordinator.data["team_name"]
@@ -167,7 +159,6 @@ class NHLScoresSensor(CoordinatorEntity):
         attrs["team_colors"] = self.coordinator.data["team_colors"]
         attrs["team_score"] = self.coordinator.data["team_score"]
         attrs["team_win_probability"] = self.coordinator.data["team_win_probability"]
-        attrs["team_timeouts"] = self.coordinator.data["team_timeouts"]
         attrs["opponent_abbr"] = self.coordinator.data["opponent_abbr"]
         attrs["opponent_id"] = self.coordinator.data["opponent_id"]
         attrs["opponent_name"] = self.coordinator.data["opponent_name"]
@@ -177,7 +168,6 @@ class NHLScoresSensor(CoordinatorEntity):
         attrs["opponent_colors"] = self.coordinator.data["opponent_colors"]
         attrs["opponent_score"] = self.coordinator.data["opponent_score"]
         attrs["opponent_win_probability"] = self.coordinator.data["opponent_win_probability"]
-        attrs["opponent_timeouts"] = self.coordinator.data["opponent_timeouts"]
         attrs["last_update"] = self.coordinator.data["last_update"]
 
         return attrs

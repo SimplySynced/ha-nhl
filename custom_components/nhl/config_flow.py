@@ -12,13 +12,13 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
-    #API_ENDPOINT,
+    API_ENDPOINT,
     CONF_TIMEOUT,
     CONF_TEAM_ID,
     DEFAULT_NAME,
     DEFAULT_TIMEOUT,
     DOMAIN,
-    #USER_AGENT,
+    USER_AGENT,
 )
 
 JSON_FEATURES = "features"
