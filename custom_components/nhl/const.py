@@ -1,5 +1,7 @@
 # API
-API_ENDPOINT = "http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+API_SCOREBOARD_ENDPOINT = "http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+API_TEAM_ENDPOINT = "http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/"
+
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
 
 # Config

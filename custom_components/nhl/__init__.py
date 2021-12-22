@@ -1,7 +1,9 @@
 """ NHL Team Status """
 import logging
 from datetime import timedelta
+from datetime import datetime
 import arrow
+import time
 
 import aiohttp
 from async_timeout import timeout
@@ -16,7 +18,8 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    API_ENDPOINT,
+    API_SCOREBOARD_ENDPOINT,
+    API_TEAM_ENDPOINT,
     CONF_TIMEOUT,
     CONF_TEAM_ID,
     COORDINATOR,
@@ -30,6 +33,18 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+today = datetime.today().strftime('%Y-%m-%d')
+
+def datetime_from_utc_to_local(utc_datetime):
+    now_timestamp = time.time()
+    offset = datetime.fromtimestamp(now_timestamp) - datetime.utcfromtimestamp(now_timestamp)
+    _LOGGER.info(offset)
+    return utc_datetime + offset
+
+_LOGGER.info(
+        "Debugging todays date and time: %s",
+        datetime.now(),
+    )
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Load the saved entities."""
@@ -150,8 +165,8 @@ async def async_get_state(config) -> dict:
     values = {}
     headers = {"User-Agent": USER_AGENT, "Accept": "application/ld+json"}
     data = None
-    url = API_ENDPOINT
     team_id = config[CONF_TEAM_ID]
+    url = API_TEAM_ENDPOINT + team_id
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as r:
             _LOGGER.debug("Getting state for %s from %s" % (team_id, url))
@@ -159,109 +174,167 @@ async def async_get_state(config) -> dict:
                 data = await r.json()
 
 
-    found_team = False
+    #found_team = False
     if data is not None:
-        for event in data["events"]:
-            #_LOGGER.debug("Looking at this event: %s" % event)
-            if team_id in event["shortName"]:
-                _LOGGER.debug("Found event; parsing data.")
-                found_team = True
-                team_index = 0 if event["competitions"][0]["competitors"][0]["team"]["abbreviation"] == team_id else 1
-                oppo_index = abs((team_index-1))
-                values["state"] = event["status"]["type"]["state"].upper()
-                values["date"] = event["date"]
-                values["puck_drop"] = arrow.get(event["date"]).humanize()
-                values["venue"] = event["competitions"][0]["venue"]["fullName"]
-                values["location"] = "%s, %s" % (event["competitions"][0]["venue"]["address"]["city"], event["competitions"][0]["venue"]["address"]["state"])
-                values["tv_network"] = event["competitions"][0]["broadcasts"][0]["names"][0]
-                if event["status"]["type"]["state"].lower() in ['pre']: # odds only exist pre-game
-                    values["odds"] = event["competitions"][0]["odds"][0]["details"]
-                    values["overunder"] = event["competitions"][0]["odds"][0]["overUnder"]
-                else:
-                    values["odds"] = None
-                    values["overunder"] = None
-                if event["status"]["type"]["state"].lower() in ['pre', 'post']: # could use status.completed == true as well
-                    # values["possession"] = None
-                    # values["last_play"] = None
-                    # values["down_distance_text"] = None
-                    # values["team_timeouts"] = 3
-                    # values["opponent_timeouts"] = 3
-                    values["period"] = None
-                    values["clock"] = None
-                    values["team_win_probability"] = None
-                    values["opponent_win_probability"] = None
-                else:
-                    values["period"] = event["status"]["period"]
-                    values["clock"] = event["status"]["displayClock"]
-                    #values["last_play"] = event["competitions"][0]["situation"]["lastPlay"]["text"]
-                    # try:
-                    #     values["down_distance_text"] = event["competitions"][0]["situation"]["downDistanceText"]
-                    # except:
-                    #     values["down_distance_text"] = None
-                    # try:
-                    #     values["possession"] = event["competitions"][0]["situation"]["possession"]
-                    # except:
-                    #     values["possession"] = None
-                    if event["competitions"][0]["competitors"][team_index]["homeAway"] == "home":
-                        #values["team_timeouts"] = event["competitions"][0]["situation"]["homeTimeouts"]
-                        #values["opponent_timeouts"] = event["competitions"][0]["situation"]["awayTimeouts"]
-                        try:
-                            values["team_win_probability"] = event["competitions"][0]["situation"]["lastPlay"]["probability"]["homeWinPercentage"]
-                            values["opponent_win_probability"] = event["competitions"][0]["situation"]["lastPlay"]["probability"]["awayWinPercentage"]
-                        except:
-                            values["team_win_probability"] = None
-                            values["opponent_win_probability"] = None
+        next_event = data["team"]["nextEvent"][0]
+        #_LOGGER.info("Looking at this event: %s" % next_event)
+        values["date"] = next_event["date"]
+        # We need to take the date string and convert it to the local timezone to properly check if game is on said day.
+        # All timestamps in ESPN NHL feed are in UTC
+        date_str = datetime.strptime(next_event["date"], '%Y-%m-%dT%H:%MZ')
+        date_check = datetime_from_utc_to_local(date_str)
+        _LOGGER.info(date_check)
+        _LOGGER.info(type(date_check))
+        _LOGGER.info(today)
+        _LOGGER.info(type(today))
+
+        values["state"] = next_event["competitions"][0]["status"]["type"]["state"].upper()
+        if next_event["competitions"][0]["boxscoreAvailable"]:
+            _LOGGER.info("Box score is available, switching API.")
+            gameday_url = API_SCOREBOARD_ENDPOINT
+            _LOGGER.info(gameday_url)
+            _LOGGER.info(team_id)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(gameday_url, headers=headers) as r:
+                    if r.status == 200:
+                        data = await r.json()
+
+            for event in data["events"]:
+                if team_id in event["shortName"]:
+                    _LOGGER.info("Found Team_ID in Feed")
+                    team_index = 0 if event["competitions"][0]["competitors"][0]["team"]["id"] == team_id else 1
+                    oppo_index = abs((team_index - 1))
+                    values["state"] = event["competitions"][0]["status"]["type"]["state"].upper()
+                    if event["competitions"][0]["status"]["type"]["state"].lower() in ['post']:
+                        if event["competitions"][0]["status"]["type"]["description"] == "Postponed":
+                            values["state"] = "POSTPONED"
                     else:
-                        #values["team_timeouts"] = event["competitions"][0]["situation"]["awayTimeouts"]
-                        #values["opponent_timeouts"] = event["competitions"][0]["situation"]["homeTimeouts"]
-                        try:
-                            values["team_win_probability"] = event["competitions"][0]["situation"]["lastPlay"]["probability"]["awayWinPercentage"]
-                            values["opponent_win_probability"] = event["competitions"][0]["situation"]["lastPlay"]["probability"]["homeWinPercentage"]
-                        except:
-                            values["team_win_probability"] = None
-                            values["opponent_win_probability"] = None
-                values["team_abbr"] = event["competitions"][0]["competitors"][team_index]["team"]["abbreviation"]
-                values["team_id"] = event["competitions"][0]["competitors"][team_index]["team"]["id"]
-                values["team_name"] = event["competitions"][0]["competitors"][team_index]["team"]["shortDisplayName"]
-                values["team_record"] = event["competitions"][0]["competitors"][team_index]["records"][0]["summary"]
-                values["team_homeaway"] = event["competitions"][0]["competitors"][team_index]["homeAway"]
-                values["team_logo"] = event["competitions"][0]["competitors"][team_index]["team"]["logo"]
-                values["team_colors"] = [''.join(('#',event["competitions"][0]["competitors"][team_index]["team"]["color"])), 
-                                         ''.join(('#',event["competitions"][0]["competitors"][team_index]["team"]["alternateColor"]))]
-                values["team_score"] = event["competitions"][0]["competitors"][team_index]["score"]                
-                values["opponent_abbr"] = event["competitions"][0]["competitors"][oppo_index]["team"]["abbreviation"]
-                values["opponent_id"] = event["competitions"][0]["competitors"][oppo_index]["team"]["id"]
-                values["opponent_name"] = event["competitions"][0]["competitors"][oppo_index]["team"]["shortDisplayName"]
-                values["opponent_record"] = event["competitions"][0]["competitors"][oppo_index]["records"][0]["summary"]
-                values["opponent_homeaway"] = event["competitions"][0]["competitors"][oppo_index]["homeAway"]
-                values["opponent_logo"] = event["competitions"][0]["competitors"][oppo_index]["team"]["logo"]
-                values["opponent_colors"] = [''.join(('#',event["competitions"][0]["competitors"][oppo_index]["team"]["color"])),
-                                             ''.join(('#',event["competitions"][0]["competitors"][oppo_index]["team"]["alternateColor"]))]
-                values["opponent_score"] = event["competitions"][0]["competitors"][oppo_index]["score"]
-                values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
-                values["private_fast_refresh"] = False
+                        values["state"] = event["competitions"][0]["status"]["type"]["state"].upper()
+                    _LOGGER.info("puck drop date: %s", event["date"])
+                    values["puck_drop"] = None
+                    values["venue"] = event["competitions"][0]["venue"]["fullName"]
+                    values["location"] = "%s, %s" % (event["competitions"][0]["venue"]["address"]["city"],
+                                                     event["competitions"][0]["venue"]["address"]["state"])
+                    try:
+                        values["tv_network"] = event["competitions"][0]["broadcasts"][0]["names"][0]
+                    except IndexError:
+                        values["tv_network"] = None
+                    values["team_abbr"] = event["competitions"][0]["competitors"][team_index]["team"]["abbreviation"]
+                    values["team_id"] = event["competitions"][0]["competitors"][team_index]["team"]["id"]
+                    values["team_name"] = event["competitions"][0]["competitors"][team_index]["team"][
+                        "shortDisplayName"]
+                    values["team_record"] = event["competitions"][0]["competitors"][team_index]["records"][0]["summary"]
+                    values["team_homeaway"] = event["competitions"][0]["competitors"][team_index]["homeAway"]
+                    values["team_logo"] = event["competitions"][0]["competitors"][team_index]["team"]["logo"]
+                    values["team_colors"] = [
+                        ''.join(('#', event["competitions"][0]["competitors"][team_index]["team"]["color"])),
+                        ''.join(('#', event["competitions"][0]["competitors"][team_index]["team"]["alternateColor"]))]
+                    values["team_score"] = event["competitions"][0]["competitors"][team_index]["score"]
+                    values["opponent_abbr"] = event["competitions"][0]["competitors"][oppo_index]["team"][
+                        "abbreviation"]
+                    values["opponent_id"] = event["competitions"][0]["competitors"][oppo_index]["team"]["id"]
+                    values["opponent_name"] = event["competitions"][0]["competitors"][oppo_index]["team"][
+                        "shortDisplayName"]
+                    values["opponent_record"] = event["competitions"][0]["competitors"][oppo_index]["records"][0][
+                        "summary"]
+                    values["opponent_homeaway"] = event["competitions"][0]["competitors"][oppo_index]["homeAway"]
+                    values["opponent_logo"] = event["competitions"][0]["competitors"][oppo_index]["team"]["logo"]
+                    values["opponent_colors"] = [
+                        ''.join(('#', event["competitions"][0]["competitors"][oppo_index]["team"]["color"])),
+                        ''.join(('#', event["competitions"][0]["competitors"][oppo_index]["team"]["alternateColor"]))]
+                    values["opponent_score"] = event["competitions"][0]["competitors"][oppo_index]["score"]
+                    values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
+                    values["private_fast_refresh"] = False
+
+                    if event["competitions"][0]["status"]["type"]["state"].lower() in ['in']:
+                        values["last_play"] = event["competitions"][0]["situation"]["lastPlay"]["text"]
+                    else:
+                        values["last_play"] = None
+                    if event["competitions"][0]["status"]["type"]["state"].lower() in [
+                        'pre']:  # odds only exist pre-game
+                        values["odds"] = event["competitions"][0]["odds"][0]["details"]
+                        values["overunder"] = event["competitions"][0]["odds"][0]["overUnder"]
+                    else:
+                        values["odds"] = None
+                        values["overunder"] = None
+                    if event["competitions"][0]["status"]["type"]["state"].lower() in ['pre','post']:  # could use status.completed == true as well
+                        values["period"] = None
+                        values["clock"] = None
+                    else:
+                        values["period"] = event["competitions"][0]["status"]["period"]
+                        values["clock"] = event["competitions"][0]["status"]["displayClock"]
+
+
+        else:
+            _LOGGER.info("Box score not available.  Use team API.")
+            team_index = 0 if next_event["competitions"][0]["competitors"][0]["team"]["id"] == team_id else 1
+            oppo_index = abs((team_index - 1))
+            values["puck_drop"] = arrow.get(next_event["date"]).humanize()
+            values["venue"] = next_event["competitions"][0]["venue"]["fullName"]
+            values["location"] = "%s, %s" % (next_event["competitions"][0]["venue"]["address"]["city"],
+                                             next_event["competitions"][0]["venue"]["address"]["state"])
+            try:
+                values["tv_network"] = next_event["competitions"][0]["broadcasts"][0]["media"]["shortName"]
+            except IndexError:
+                values["tv_network"] = None
+            _LOGGER.info(values["tv_network"])
+            values["team_abbr"] = next_event["competitions"][0]["competitors"][team_index]["team"]["abbreviation"]
+            values["team_id"] = next_event["competitions"][0]["competitors"][team_index]["team"]["id"]
+            values["team_name"] = next_event["competitions"][0]["competitors"][team_index]["team"]["shortDisplayName"]
+            values["team_homeaway"] = next_event["competitions"][0]["competitors"][team_index]["homeAway"]
+            if next_event["competitions"][0]["status"]["type"]["state"].lower() in ['post']:
+                values["team_score"] = next_event["competitions"][0]["competitors"][team_index]["score"]["value"]
+                values["team_record"] = next_event["competitions"][0]["competitors"][team_index]["record"][0][
+                    "displayValue"]
+            else:
+                values["team_record"] = None
+                values["team_score"] = None
+            values["team_colors"] = ["#000000", "#000000"]
+            values["team_logo"] = next_event["competitions"][0]["competitors"][team_index]["team"]["logos"][3]["href"]
+            values["opponent_abbr"] = next_event["competitions"][0]["competitors"][oppo_index]["team"]["abbreviation"]
+            values["opponent_id"] = next_event["competitions"][0]["competitors"][oppo_index]["team"]["id"]
+            values["opponent_name"] = next_event["competitions"][0]["competitors"][oppo_index]["team"][
+                "shortDisplayName"]
+            values["opponent_homeaway"] = next_event["competitions"][0]["competitors"][oppo_index]["homeAway"]
+            if next_event["competitions"][0]["status"]["type"]["state"].lower() in ['post']:
+                values["opponent_score"] = next_event["competitions"][0]["competitors"][oppo_index]["score"]["value"]
+                values["opponent_record"] = next_event["competitions"][0]["competitors"][oppo_index]["record"][0][
+                    "displayValue"]
+            else:
+                values["opponent_record"] = None
+                values["opponent_score"] = None
+            values["opponent_colors"] = ["#000000", "#000000"]
+            values["opponent_logo"] = next_event["competitions"][0]["competitors"][oppo_index]["team"]["logos"][3][
+                "href"]
+            values["private_fast_refresh"] = False
+            values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
+            values["period"] = None
+            values["clock"] = None
+            values["odds"] = None
+            values["overunder"] = "available on gameday"
+
         
         # Never found the team. Either a bye or a post-season condition
-        if not found_team:
-            _LOGGER.debug("Did not find a game with for the configured team. Checking if it's a bye week.")
-            found_bye = False
-            values = await async_clear_states(config)
-            for bye_team in data["week"]["teamsOnBye"]:
-                if team_id.lower() == bye_team["abbreviation"].lower():
-                    _LOGGER.debug("Bye week confirmed.")
-                    found_bye = True
-                    values["team_abbr"] = bye_team["abbreviation"]
-                    values["team_name"] = bye_team["shortDisplayName"]
-                    values["team_logo"] = bye_team["logo"]
-                    values["state"] = 'BYE'
-                    values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
-            if found_bye == False:
-                    _LOGGER.debug("Team not found in active games or bye week list. Have you missed the playoffs?")
-                    values["team_abbr"] = None
-                    values["team_name"] = None
-                    values["team_logo"] = None
-                    values["state"] = 'No Games Found'
-                    values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
+        # if not found_team:
+        #     _LOGGER.debug("Did not find a game with for the configured team. Checking if it's a bye week.")
+        #     found_bye = False
+        #     values = await async_clear_states(config)
+        #     for bye_team in data["week"]["teamsOnBye"]:
+        #         if team_id.lower() == bye_team["abbreviation"].lower():
+        #             _LOGGER.debug("Bye week confirmed.")
+        #             found_bye = True
+        #             values["team_abbr"] = bye_team["abbreviation"]
+        #             values["team_name"] = bye_team["shortDisplayName"]
+        #             values["team_logo"] = bye_team["logo"]
+        #             values["state"] = 'BYE'
+        #             values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
+        #     if found_bye == False:
+        #             _LOGGER.debug("Team not found in active games or bye week list. Have you missed the playoffs?")
+        #             values["team_abbr"] = None
+        #             values["team_name"] = None
+        #             values["team_logo"] = None
+        #             values["state"] = 'No Games Found'
+        #             values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
 
         if values["state"] == 'PRE' and ((arrow.get(values["date"])-arrow.now()).total_seconds() < 1200):
             _LOGGER.debug("Event is within 20 minutes, setting refresh rate to 5 seconds.")
@@ -274,6 +347,7 @@ async def async_get_state(config) -> dict:
             values["private_fast_refresh"] = False
 
     return values
+
 
 async def async_clear_states(config) -> dict:
     """Clear all state attributes"""
@@ -290,16 +364,13 @@ async def async_clear_states(config) -> dict:
         "tv_network": None,
         "odds": None,
         "overunder": None,
-        # "last_play": None,
-        # "down_distance_text": None,
-        # "possession": None,
+        "team_abbr": None,
         "team_id": None,
+        "team_name": None,
         "team_record": None,
         "team_homeaway": None,
         "team_colors": None,
         "team_score": None,
-        "team_win_probability": None,
-        "team_timeouts": None,
         "opponent_abbr": None,
         "opponent_id": None,
         "opponent_name": None,
@@ -308,8 +379,6 @@ async def async_clear_states(config) -> dict:
         "opponent_logo": None,
         "opponent_colors": None,
         "opponent_score": None,
-        "opponent_win_probability": None,
-        "opponent_timeouts": None,
         "last_update": None,
         "private_fast_refresh": False
     }
