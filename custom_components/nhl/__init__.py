@@ -166,107 +166,106 @@ async def async_get_state(config) -> dict:
     headers = {"User-Agent": USER_AGENT, "Accept": "application/ld+json"}
     data = None
     team_id = config[CONF_TEAM_ID]
-    url = API_TEAM_ENDPOINT + team_id
+    gameday_url = API_SCOREBOARD_ENDPOINT
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as r:
-            _LOGGER.debug("Getting state for %s from %s" % (team_id, url))
+        async with session.get(gameday_url, headers=headers) as r:
+            _LOGGER.debug("Getting state for %s from %s" % (team_id, gameday_url))
             if r.status == 200:
                 data = await r.json()
 
-
-    #found_team = False
+    found_team = False
     if data is not None:
-        next_event = data["team"]["nextEvent"][0]
-        #_LOGGER.info("Looking at this event: %s" % next_event)
-        values["date"] = next_event["date"]
-        # We need to take the date string and convert it to the local timezone to properly check if game is on said day.
-        # All timestamps in ESPN NHL feed are in UTC
-        date_str = datetime.strptime(next_event["date"], '%Y-%m-%dT%H:%MZ')
-        date_check = datetime_from_utc_to_local(date_str)
-        _LOGGER.info(date_check)
-        _LOGGER.info(type(date_check))
-        _LOGGER.info(today)
-        _LOGGER.info(type(today))
+        for event in data["events"]:
+            _LOGGER.info("Checking for TEAM_ID in scoreboard feed")
+            if team_id in event["shortName"]:
+                _LOGGER.info("Found Team_ID in scoreboard feed")
+                found_team = True
+                values["state"] = event["status"]["type"]["state"].upper()
+                team_index = 0 if event["competitions"][0]["competitors"][0]["team"]["id"] == team_id else 1
+                oppo_index = abs((team_index - 1))
+                values["state"] = event["competitions"][0]["status"]["type"]["state"].upper()
+                values["date"] = event["date"]
+                if event["competitions"][0]["status"]["type"]["state"].lower() in ['post']:
+                    _LOGGER.info("Game State is POST")
+                    if event["competitions"][0]["status"]["type"]["description"] == "Postponed":
+                        _LOGGER.info("Game is Postponed, set state")
+                        values["state"] = "POSTPONED"
+                else:
+                    values["state"] = event["competitions"][0]["status"]["type"]["state"].upper()
+                _LOGGER.info("puck drop date: %s", event["date"])
+                values["puck_drop"] = None
+                values["venue"] = event["competitions"][0]["venue"]["fullName"]
+                values["location"] = "%s, %s" % (event["competitions"][0]["venue"]["address"]["city"],
+                                                 event["competitions"][0]["venue"]["address"]["state"])
+                try:
+                    values["tv_network"] = event["competitions"][0]["broadcasts"][0]["names"][0]
+                except IndexError:
+                    values["tv_network"] = None
+                values["team_abbr"] = event["competitions"][0]["competitors"][team_index]["team"]["abbreviation"]
+                values["team_id"] = event["competitions"][0]["competitors"][team_index]["team"]["id"]
+                values["team_name"] = event["competitions"][0]["competitors"][team_index]["team"][
+                    "shortDisplayName"]
+                values["team_record"] = event["competitions"][0]["competitors"][team_index]["records"][0]["summary"]
+                values["team_homeaway"] = event["competitions"][0]["competitors"][team_index]["homeAway"]
+                values["team_logo"] = event["competitions"][0]["competitors"][team_index]["team"]["logo"]
+                values["team_colors"] = [
+                    ''.join(('#', event["competitions"][0]["competitors"][team_index]["team"]["color"])),
+                    ''.join(('#', event["competitions"][0]["competitors"][team_index]["team"]["alternateColor"]))]
+                values["team_score"] = event["competitions"][0]["competitors"][team_index]["score"]
+                values["opponent_abbr"] = event["competitions"][0]["competitors"][oppo_index]["team"][
+                    "abbreviation"]
+                values["opponent_id"] = event["competitions"][0]["competitors"][oppo_index]["team"]["id"]
+                values["opponent_name"] = event["competitions"][0]["competitors"][oppo_index]["team"][
+                    "shortDisplayName"]
+                values["opponent_record"] = event["competitions"][0]["competitors"][oppo_index]["records"][0][
+                    "summary"]
+                values["opponent_homeaway"] = event["competitions"][0]["competitors"][oppo_index]["homeAway"]
+                values["opponent_logo"] = event["competitions"][0]["competitors"][oppo_index]["team"]["logo"]
+                values["opponent_colors"] = [
+                    ''.join(('#', event["competitions"][0]["competitors"][oppo_index]["team"]["color"])),
+                    ''.join(('#', event["competitions"][0]["competitors"][oppo_index]["team"]["alternateColor"]))]
+                values["opponent_score"] = event["competitions"][0]["competitors"][oppo_index]["score"]
+                values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
+                values["private_fast_refresh"] = False
 
-        values["state"] = next_event["competitions"][0]["status"]["type"]["state"].upper()
-        if next_event["competitions"][0]["boxscoreAvailable"]:
-            _LOGGER.info("Box score is available, switching API.")
-            gameday_url = API_SCOREBOARD_ENDPOINT
-            _LOGGER.info(gameday_url)
+                if event["competitions"][0]["status"]["type"]["state"].lower() in ['in']:
+                    values["last_play"] = event["competitions"][0]["situation"]["lastPlay"]["text"]
+                else:
+                    values["last_play"] = None
+                if event["competitions"][0]["status"]["type"]["state"].lower() in [
+                    'pre']:  # odds only exist pre-game
+                    values["odds"] = event["competitions"][0]["odds"][0]["details"]
+                    values["overunder"] = event["competitions"][0]["odds"][0]["overUnder"]
+                else:
+                    values["odds"] = None
+                    values["overunder"] = None
+                if event["competitions"][0]["status"]["type"]["state"].lower() in ['pre','post']:  # could use status.completed == true as well
+                    values["period"] = None
+                    values["clock"] = None
+                else:
+                    values["period"] = event["competitions"][0]["status"]["period"]
+                    values["clock"] = event["competitions"][0]["status"]["displayClock"]
+                break
+
+        if not found_team:
+            _LOGGER.info("Team not found on scoreboard feed.  Using team API.")
+
+            team_url = API_TEAM_ENDPOINT + team_id
+            _LOGGER.info(team_url)
             _LOGGER.info(team_id)
             async with aiohttp.ClientSession() as session:
-                async with session.get(gameday_url, headers=headers) as r:
+                async with session.get(team_url, headers=headers) as r:
                     if r.status == 200:
                         data = await r.json()
+            next_event = data["team"]["nextEvent"][0]
 
-            for event in data["events"]:
-                if team_id in event["shortName"]:
-                    _LOGGER.info("Found Team_ID in Feed")
-                    team_index = 0 if event["competitions"][0]["competitors"][0]["team"]["id"] == team_id else 1
-                    oppo_index = abs((team_index - 1))
-                    values["state"] = event["competitions"][0]["status"]["type"]["state"].upper()
-                    if event["competitions"][0]["status"]["type"]["state"].lower() in ['post']:
-                        if event["competitions"][0]["status"]["type"]["description"] == "Postponed":
-                            values["state"] = "POSTPONED"
-                    else:
-                        values["state"] = event["competitions"][0]["status"]["type"]["state"].upper()
-                    _LOGGER.info("puck drop date: %s", event["date"])
-                    values["puck_drop"] = None
-                    values["venue"] = event["competitions"][0]["venue"]["fullName"]
-                    values["location"] = "%s, %s" % (event["competitions"][0]["venue"]["address"]["city"],
-                                                     event["competitions"][0]["venue"]["address"]["state"])
-                    try:
-                        values["tv_network"] = event["competitions"][0]["broadcasts"][0]["names"][0]
-                    except IndexError:
-                        values["tv_network"] = None
-                    values["team_abbr"] = event["competitions"][0]["competitors"][team_index]["team"]["abbreviation"]
-                    values["team_id"] = event["competitions"][0]["competitors"][team_index]["team"]["id"]
-                    values["team_name"] = event["competitions"][0]["competitors"][team_index]["team"][
-                        "shortDisplayName"]
-                    values["team_record"] = event["competitions"][0]["competitors"][team_index]["records"][0]["summary"]
-                    values["team_homeaway"] = event["competitions"][0]["competitors"][team_index]["homeAway"]
-                    values["team_logo"] = event["competitions"][0]["competitors"][team_index]["team"]["logo"]
-                    values["team_colors"] = [
-                        ''.join(('#', event["competitions"][0]["competitors"][team_index]["team"]["color"])),
-                        ''.join(('#', event["competitions"][0]["competitors"][team_index]["team"]["alternateColor"]))]
-                    values["team_score"] = event["competitions"][0]["competitors"][team_index]["score"]
-                    values["opponent_abbr"] = event["competitions"][0]["competitors"][oppo_index]["team"][
-                        "abbreviation"]
-                    values["opponent_id"] = event["competitions"][0]["competitors"][oppo_index]["team"]["id"]
-                    values["opponent_name"] = event["competitions"][0]["competitors"][oppo_index]["team"][
-                        "shortDisplayName"]
-                    values["opponent_record"] = event["competitions"][0]["competitors"][oppo_index]["records"][0][
-                        "summary"]
-                    values["opponent_homeaway"] = event["competitions"][0]["competitors"][oppo_index]["homeAway"]
-                    values["opponent_logo"] = event["competitions"][0]["competitors"][oppo_index]["team"]["logo"]
-                    values["opponent_colors"] = [
-                        ''.join(('#', event["competitions"][0]["competitors"][oppo_index]["team"]["color"])),
-                        ''.join(('#', event["competitions"][0]["competitors"][oppo_index]["team"]["alternateColor"]))]
-                    values["opponent_score"] = event["competitions"][0]["competitors"][oppo_index]["score"]
-                    values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
-                    values["private_fast_refresh"] = False
-
-                    if event["competitions"][0]["status"]["type"]["state"].lower() in ['in']:
-                        values["last_play"] = event["competitions"][0]["situation"]["lastPlay"]["text"]
-                    else:
-                        values["last_play"] = None
-                    if event["competitions"][0]["status"]["type"]["state"].lower() in [
-                        'pre']:  # odds only exist pre-game
-                        values["odds"] = event["competitions"][0]["odds"][0]["details"]
-                        values["overunder"] = event["competitions"][0]["odds"][0]["overUnder"]
-                    else:
-                        values["odds"] = None
-                        values["overunder"] = None
-                    if event["competitions"][0]["status"]["type"]["state"].lower() in ['pre','post']:  # could use status.completed == true as well
-                        values["period"] = None
-                        values["clock"] = None
-                    else:
-                        values["period"] = event["competitions"][0]["status"]["period"]
-                        values["clock"] = event["competitions"][0]["status"]["displayClock"]
-
-
-        else:
-            _LOGGER.info("Box score not available.  Use team API.")
+            values["state"] = next_event["competitions"][0]["status"]["type"]["state"].upper()
+            if next_event["competitions"][0]["status"]["type"]["state"].lower() in ['post']:
+                _LOGGER.info("Game State is POST")
+                if next_event["competitions"][0]["status"]["type"]["description"] == "Postponed":
+                    _LOGGER.info("Game is Postponed, set state")
+                    values["state"] = "POSTPONED"
+            values["date"] = next_event["date"]
             team_index = 0 if next_event["competitions"][0]["competitors"][0]["team"]["id"] == team_id else 1
             oppo_index = abs((team_index - 1))
             values["puck_drop"] = arrow.get(next_event["date"]).humanize()
@@ -277,7 +276,6 @@ async def async_get_state(config) -> dict:
                 values["tv_network"] = next_event["competitions"][0]["broadcasts"][0]["media"]["shortName"]
             except IndexError:
                 values["tv_network"] = None
-            _LOGGER.info(values["tv_network"])
             values["team_abbr"] = next_event["competitions"][0]["competitors"][team_index]["team"]["abbreviation"]
             values["team_id"] = next_event["competitions"][0]["competitors"][team_index]["team"]["id"]
             values["team_name"] = next_event["competitions"][0]["competitors"][team_index]["team"]["shortDisplayName"]
