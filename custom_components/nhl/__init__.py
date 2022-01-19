@@ -181,7 +181,9 @@ async def async_get_state(config) -> dict:
                 _LOGGER.info("Found Team_ID in scoreboard feed")
                 found_team = True
                 values["state"] = event["status"]["type"]["state"].upper()
-                team_index = 0 if event["competitions"][0]["competitors"][0]["team"]["id"] == team_id else 1
+                _LOGGER.info("Team ID: %s",team_id)
+                team_index = 0 if event["competitions"][0]["competitors"][0]["team"]["abbreviation"] == team_id else 1
+                _LOGGER.info("Team Index: %s", team_index)
                 oppo_index = abs((team_index - 1))
                 values["state"] = event["competitions"][0]["status"]["type"]["state"].upper()
                 values["date"] = event["date"]
@@ -282,7 +284,7 @@ async def async_get_state(config) -> dict:
                     _LOGGER.info("Game is Postponed, set state")
                     values["state"] = "POSTPONED"
             values["date"] = next_event["date"]
-            team_index = 0 if next_event["competitions"][0]["competitors"][0]["team"]["id"] == team_id else 1
+            team_index = 0 if next_event["competitions"][0]["competitors"][0]["team"]["abbreviation"] == team_id else 1
             oppo_index = abs((team_index - 1))
             values["puck_drop"] = arrow.get(next_event["date"]).humanize()
             values["venue"] = next_event["competitions"][0]["venue"]["fullName"]
