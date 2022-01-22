@@ -181,7 +181,7 @@ async def async_get_state(config) -> dict:
                 _LOGGER.info("Found Team_ID in scoreboard feed")
                 found_team = True
                 values["state"] = event["status"]["type"]["state"].upper()
-                _LOGGER.info("Team ID: %s",team_id)
+                _LOGGER.info("Team ID: %s", team_id)
                 team_index = 0 if event["competitions"][0]["competitors"][0]["team"]["abbreviation"] == team_id else 1
                 _LOGGER.info("Team Index: %s", team_index)
                 oppo_index = abs((team_index - 1))
@@ -226,22 +226,24 @@ async def async_get_state(config) -> dict:
                 values["opponent_score"] = event["competitions"][0]["competitors"][oppo_index]["score"]
 
                 if event["competitions"][0]["status"]["type"]["state"].lower() in ['in']:
+                    values["team_period_1"] = 0
                     values["team_period_2"] = 0
                     values["team_period_3"] = 0
                     values["team_period_4"] = 0
                     per = 1
                     for score in event["competitions"][0]["competitors"][team_index]["linescores"]:
-                        values["team_period_%s" % per] = score["value"]
-                        _LOGGER.info("team_period_%s" % per)
+                        values["team_period_%s", per] = score["value"]
+                        _LOGGER.info("team_period_%s", per)
                         per = per+1
 
+                    values["opponent_period_1"] = 0
                     values["opponent_period_2"] = 0
                     values["opponent_period_3"] = 0
                     values["opponent_period_4"] = 0
                     per = 1
                     for score in event["competitions"][0]["competitors"][oppo_index]["linescores"]:
-                        values["opponent_period_%s" %per] = score["value"]
-                        _LOGGER.info("opponent_period_%s" % per)
+                        values["opponent_period_%s", per] = score["value"]
+                        _LOGGER.info("opponent_period_%s", per)
                         per = per+1
 
                 values["last_update"] = arrow.now().format(arrow.FORMAT_W3C)
